@@ -223,7 +223,7 @@
 
 (defun org-hover-file (file)
   "Preview specified org FILE."
-  (interactive "Hover org file: ")
+  (interactive "fHover org file: ")
   (if (org-hover--validate-link file)
       (let* ((content (org-hover--extract-content file))
              (frame (org-hover--show-popup content)))
