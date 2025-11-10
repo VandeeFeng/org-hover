@@ -80,7 +80,7 @@
   :group 'org-hover-ui-popup)
 
 (defvar org-hover-ui-popup-frame-parameters
-  '((no-accept-focus . t)
+  '((no-accept-focus . nil)
     (no-focus-on-map . t)
     (internal-border-width . 1)
     (vertical-scroll-bars . nil)
@@ -89,7 +89,7 @@
     (tool-bar-lines . 0)
     (unsplittable . t)
     (undecorated . t)
-    (cursor-type . nil)
+    (cursor-type . t)
     (desktop-dont-save . t))
   "Default frame parameters for the popup frame.")
 
@@ -133,8 +133,8 @@
   (when org-hover-ui-enable-auto-cleanup
     (setq org-hover-ui--cleanup-timer
           (run-with-timer org-hover-ui-cleanup-interval
-                         org-hover-ui-cleanup-interval
-                         #'org-hover-ui--maybe-cleanup))))
+                          org-hover-ui-cleanup-interval
+                          #'org-hover-ui--maybe-cleanup))))
 
 (defun org-hover-ui--cancel-cleanup-timer ()
   "Cancel the cleanup timer when popup is hidden."
