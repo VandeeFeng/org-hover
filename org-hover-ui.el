@@ -38,6 +38,15 @@
 (defvar org-hover-ui-popup--position-function #'org-hover-ui-popup--default-at-point-position-function
   "This function is used to set the childframe's position.")
 
+(defvar org-hover-ui--cleanup-timer nil
+  "Timer for auto-cleanup of popup window.")
+
+(defvar org-hover-ui--last-point nil
+  "Last cursor position when popup was shown.")
+
+(defvar org-hover-ui--last-buffer nil
+  "Last buffer when popup was shown.")
+
 
 ;;; Customization
 
@@ -57,6 +66,16 @@
 
 (defcustom org-hover-ui-popup-max-pixel-height 700
   "Maximum height of popup frame in pixels."
+  :type 'number
+  :group 'org-hover-ui-popup)
+
+(defcustom org-hover-ui-enable-auto-cleanup t
+  "Enable auto-cleanup of popup window when user interacts elsewhere."
+  :type 'boolean
+  :group 'org-hover-ui-popup)
+
+(defcustom org-hover-ui-cleanup-interval 0.2
+  "Interval in seconds for checking auto-cleanup conditions."
   :type 'number
   :group 'org-hover-ui-popup)
 
@@ -88,6 +107,40 @@
 
 
 ;;; Popup Internals
+
+(defun org-hover-ui--maybe-cleanup ()
+  "Check if popup should be hidden due to user interaction elsewhere."
+  (when (and org-hover-ui-enable-auto-cleanup
+             org-hover-ui-popup--frame
+             (frame-live-p org-hover-ui-popup--frame)
+             (frame-visible-p org-hover-ui-popup--frame))
+    (let ((current-buffer (current-buffer))
+          (current-point (point))
+          (current-frame (selected-frame))
+          (mouse-pos (mouse-position)))
+      (unless (or (eq current-frame org-hover-ui-popup--frame)
+                  (and (car mouse-pos)
+                       (eq (car mouse-pos) org-hover-ui-popup--frame)))
+        (when (or (not (eq current-buffer org-hover-ui--last-buffer))
+                  (not (eq current-point org-hover-ui--last-point)))
+          (org-hover-ui-popup-hide))))))
+
+(defun org-hover-ui--start-cleanup-timer ()
+  "Start the cleanup timer when popup is shown."
+  (org-hover-ui--cancel-cleanup-timer)
+  (setq org-hover-ui--last-point (point))
+  (setq org-hover-ui--last-buffer (current-buffer))
+  (when org-hover-ui-enable-auto-cleanup
+    (setq org-hover-ui--cleanup-timer
+          (run-with-timer org-hover-ui-cleanup-interval
+                         org-hover-ui-cleanup-interval
+                         #'org-hover-ui--maybe-cleanup))))
+
+(defun org-hover-ui--cancel-cleanup-timer ()
+  "Cancel the cleanup timer when popup is hidden."
+  (when org-hover-ui--cleanup-timer
+    (cancel-timer org-hover-ui--cleanup-timer)
+    (setq org-hover-ui--cleanup-timer nil)))
 
 (defun org-hover-ui-popup--point-position-relative-to-native-frame (&optional point window)
   "Return (X . Y) as the coordinate of POINT in WINDOW relative to the native frame."
@@ -188,6 +241,7 @@
             (org-hover-ui-popup--update-childframe-geometry frame window))
           (make-frame-visible frame)
           (select-frame-set-input-focus (selected-frame) 'norecord)
+          (org-hover-ui--start-cleanup-timer)
           frame))
     (error
      (message "Org-hover UI popup error: %s" (error-message-string err))
@@ -196,6 +250,7 @@
 (defun org-hover-ui-popup-hide ()
   "Hide the popup frame."
   (interactive)
+  (org-hover-ui--cancel-cleanup-timer)
   (when (and org-hover-ui-popup--frame (frame-live-p org-hover-ui-popup--frame))
     (make-frame-invisible org-hover-ui-popup--frame)))
 

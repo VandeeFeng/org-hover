@@ -9,7 +9,7 @@ An Emacs package that provides hover preview functionality for org links.
 - **Hover Preview**: Preview content of file links in org-mode
 - **Smart Positioning**: Intelligently position popup windows based on screen boundaries
 - **Adaptive Sizing**: Automatically adjust preview window size based on content
-- **Auto-hide**: Configurable auto-hide functionality
+- **Auto-hide**: Close popup by clicking outside or configure auto-hide after delay
 
 ## Installation
 
@@ -32,8 +32,7 @@ Basic Usage:
 
 1. In an org file, place cursor on an org file link
 2. Press `C-c h` to preview the link
-3. Press `C-c H H` to hide the preview window
-4. Press `C-c H f` to preview any specified file.
+3. Press `C-c H f` to preview any specified file.
 
 ## Configuration Options
 

@@ -205,14 +205,6 @@
           (org-hover-hide)
           (find-file-other-window path))))))
 
-(defun org-hover-hide ()
-  "Hide the org-hover popup."
-  (interactive)
-  (org-hover--cancel-auto-hide)
-  (when (org-hover--get-popup-frame)
-    (org-hover-ui-popup-hide))
-  (setq org-hover--current-link nil))
-
 (defun org-hover-at-point ()
   "Preview org file link at point."
   (interactive)
@@ -242,7 +234,6 @@
 ;;; Key Bindings
 
 (define-key org-mode-map (kbd "C-c h") 'org-hover-at-point)
-(global-set-key (kbd "C-c H h") 'org-hover-hide)
 (global-set-key (kbd "C-c H f") 'org-hover-file)
 
 (provide 'org-hover)
