@@ -30,6 +30,7 @@
 (require 'org)
 (require 'org-element)
 (require 'org-hover-ui)
+(require 'org-block-hover)
 
 ;;; Variables
 
@@ -195,17 +196,17 @@
 
 ;;; Main Interactive Functions
 
-(defun org-hover--follow-link ()
-  "Follow link at point in the popup buffer."
-  (interactive)
-  (let ((link (org-element-context)))
-    (when (eq (org-element-type link) 'link)
-      (let ((path (org-element-property :path link)))
-        (when (file-exists-p path)
-          (org-hover-hide)
-          (find-file-other-window path))))))
+;; (defun org-hover--follow-link ()
+;;   "Follow link at point in the popup buffer."
+;;   (interactive)
+;;   (let ((link (org-element-context)))
+;;     (when (eq (org-element-type link) 'link)
+;;       (let ((path (org-element-property :path link)))
+;;         (when (file-exists-p path)
+;;           (org-hover-hide)
+;;           (find-file-other-window path))))))
 
-(defun org-hover-at-point ()
+(defun org-hover-link ()
   "Preview org file link at point."
   (interactive)
   (let ((link (org-hover--link-at-point)))
@@ -221,6 +222,21 @@
                 frame)
             (message "Not a valid org file: %s" file-path)))))))
 
+(defun org-hover-block ()
+  "Preview INCLUDE block content without replacing it."
+  (interactive)
+  (if (org-block-hover--detect-include-block)
+      (org-block-hover-preview-only)
+    (message "No INCLUDE block found at point")))
+
+(defun org-hover-block-insert ()
+  "Replace INCLUDE block content with actual content and show popup."
+  (interactive)
+  (let ((include-info (org-block-hover--detect-include-block)))
+    (if include-info
+        (org-block-hover-trigger)
+      (message "No INCLUDE block found at point"))))
+
 (defun org-hover-file (file)
   "Preview specified org FILE."
   (interactive "fHover org file: ")
@@ -233,8 +249,15 @@
 
 ;;; Key Bindings
 
-(define-key org-mode-map (kbd "C-c h") 'org-hover-at-point)
-(global-set-key (kbd "C-c H f") 'org-hover-file)
+(defvar org-hover-map (make-sparse-keymap " org-hover")
+  "Keymap for org-hover commands.")
+
+(define-key org-hover-map (kbd "l") 'org-hover-link)
+(define-key org-hover-map (kbd "f") 'org-hover-file)
+(define-key org-hover-map (kbd "b") 'org-hover-block)
+(define-key org-hover-map (kbd "B") 'org-hover-block-insert)
+
+(define-key org-mode-map (kbd "C-c h") org-hover-map)
 
 (provide 'org-hover)
 ;;; org-hover.el ends here
