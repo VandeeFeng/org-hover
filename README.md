@@ -7,6 +7,7 @@ An Emacs package that provides hover preview functionality for org links.
 ## Features
 
 - **Link Preview**: Preview content of file links in org-mode
+- **Denote Link Support**: Preview content of Denote links `[[denote:IDENTIFIER][DESCRIPTION]]`
 - **Block Preview**: Preview specific files using native org-mode `#+INCLUDE` syntax within `#+begin_quote` blocks
 - **Smart Positioning**: Intelligently position popup windows based on screen boundaries
 - **Adaptive Sizing**: Automatically adjust preview window size based on content

@@ -40,6 +40,12 @@
 (defvar org-hover--auto-hide-timer nil
   "Timer for auto-hiding the popup.")
 
+(defconst org-hover--denote-link-regexp "\\[\\[denote:\\([^]]+\\)\\]\\(\\[\\([^]]+\\)\\]\\)?\\]"
+  "Regular expression to match Denote links.")
+
+(defconst org-hover--file-link-regexp "\\[\\[\\(file:\\)?\\([^]]+\\)\\]\\(\\[\\([^]]+\\)\\]\\)?\\]"
+  "Regular expression to match file links.")
+
 ;;; Customization
 
 (defgroup org-hover nil
@@ -69,6 +75,35 @@
 
 ;;; Link Detection Functions
 
+(defun org-hover--denote-link-at-point ()
+  "Return denote link at point, or nil if none found."
+  (save-excursion
+    (beginning-of-line)
+    (let ((line-end (line-end-position)))
+      (while (and (< (point) line-end)
+                  (not (looking-at-p "\\[\\[denote:.*\\]\\]")))
+        (forward-char))
+      (when (and (< (point) line-end)
+                 (looking-at org-hover--denote-link-regexp))
+        (let ((identifier (match-string 1))
+              (description (match-string 3)))
+          (list :type 'denote
+                :identifier identifier
+                :description description
+                :raw-link (match-string 0)))))))
+
+(defun org-hover--resolve-denote-identifier (identifier)
+  "Resolve Denote IDENTIFIER to full file path.
+Returns the full file path if found, nil otherwise."
+  (when (boundp 'denote-directory)
+    (let ((denote-dir (symbol-value 'denote-directory)))
+      (when (and denote-dir (file-directory-p denote-dir))
+        (let ((matching-files (directory-files-recursively
+                               denote-dir
+                               (concat ".*" identifier ".*\\.\\(org\\|md\\|txt\\)$"))))
+          (when matching-files
+            (car matching-files)))))))
+
 (defun org-hover--link-at-point ()
   "Return org file link at point, or nil if none found."
   (let ((context (org-element-context)))
@@ -76,24 +111,43 @@
       (if (eq (org-element-type context) 'link)
           (let ((link-type (org-element-property :type context))
                 (link-path (org-element-property :path context)))
-            (when (string= link-type "file")
-              context))
+            (cond
+             ;; Handle denote links through org-element
+             ((string= link-type "denote")
+              (list :type 'denote
+                    :identifier link-path
+                    :raw-link (org-element-property :raw-link context)))
+             ((string= link-type "file")
+              context)
+             ;; Otherwise, fall back to manual detection
+             (t nil)))
         ;; If not directly on link, try to find link at current line
         (save-excursion
           (beginning-of-line)
           (let ((line-end (line-end-position)))
             (while (and (< (point) line-end)
                         (not (or (looking-at-p "\\[\\[.*\\]\\[.*\\]\\]")
-                                 (looking-at-p "\\[\\[.*\\]\\]"))))
+                                 (looking-at-p "\\[\\[.*\\]\\]")
+                                 (looking-at-p "\\[\\[denote:.*\\]\\]"))))
               (forward-char))
-            (when (and (< (point) line-end)
-                       (or (looking-at "\\[\\[\\(file:\\)?\\([^]]+\\)\\]\\[\\([^]]+\\)\\]\\]")
-                           (looking-at "\\[\\[\\(file:\\)?\\([^]]+\\)\\]\\]")))
+            (cond
+             ;; Check for denote links first
+             ((and (< (point) line-end)
+                   (looking-at org-hover--denote-link-regexp))
+              (let ((identifier (match-string 1))
+                    (description (match-string 3)))
+                (list :type 'denote
+                      :identifier identifier
+                      :description description
+                      :raw-link (match-string 0))))
+             ;; Check for regular file links
+             ((and (< (point) line-end)
+                   (looking-at org-hover--file-link-regexp))
               (let ((path (match-string 2)))
                 ;; Return a plist directly instead of trying to mock org-element
                 (list :type 'file
                       :path (expand-file-name path)
-                      :raw-link (match-string 0))))))))))
+                      :raw-link (match-string 0)))))))))))
 
 (defun org-hover--extract-link-path (link)
   "Extract file path from org LINK element."
@@ -212,15 +266,32 @@
   (let ((link (org-hover--link-at-point)))
     (if (not link)
         (message "No org file link found at point")
-      (let ((file-path (org-hover--extract-link-path link)))
-        (if (not file-path)
-            (message "Could not extract file path from link")
-          (if (org-hover--validate-link file-path)
-              (let* ((content (org-hover--extract-content file-path))
-                     (frame (org-hover--show-popup content)))
-                (setq org-hover--current-link file-path)
-                frame)
-            (message "Not a valid org file: %s" file-path)))))))
+      (cond
+       ;; Handle Denote links
+       ((eq (plist-get link :type) 'denote)
+        (let ((identifier (plist-get link :identifier)))
+          (if (not identifier)
+              (message "Could not extract Denote identifier from link")
+            (let ((file-path (org-hover--resolve-denote-identifier identifier)))
+              (if (not file-path)
+                  (message "Denote file not found for identifier: %s" identifier)
+                (if (org-hover--validate-link file-path)
+                    (let* ((content (org-hover--extract-content file-path))
+                           (frame (org-hover--show-popup content)))
+                      (setq org-hover--current-link file-path)
+                      frame)
+                  (message "Not a valid file: %s" file-path)))))))
+       ;; Handle regular file links
+       (t
+        (let ((file-path (org-hover--extract-link-path link)))
+          (if (not file-path)
+              (message "Could not extract file path from link")
+            (if (org-hover--validate-link file-path)
+                (let* ((content (org-hover--extract-content file-path))
+                       (frame (org-hover--show-popup content)))
+                  (setq org-hover--current-link file-path)
+                  frame)
+              (message "Not a valid org file: %s" file-path)))))))))
 
 (defun org-hover-block ()
   "Preview INCLUDE block content without replacing it."
