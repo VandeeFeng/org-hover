@@ -57,8 +57,12 @@ When nil, only show popup without replacing content."
 ;;; Variables
 
 (defconst org-block-hover-include-regex
-  "^\\s-*#\\+INCLUDE:[ \t]*\"\\([^\"]+\\)\"\\(?:[ \t]+:\\(lines\\|section\\)[ \t]+\"\\([^\"]+\\)\\)?"
-  "Regex pattern to match org INCLUDE directives.")
+  "^\\s-*#\\+INCLUDE:[ \t]*\"\\([^\"]+\\(?:::\\*[^\"]+\\)?\\)\"\\(?:[ \t]+:\\(lines\\)\\(?:[ \t]+\\([^\"\\n]*\\)\\)?\\)?"
+  "Regex pattern to match org INCLUDE directives.
+Matches:
+1. file path with optional ::*header
+2. parameter name (lines)
+3. parameter value for lines")
 
 ;;; INCLUDE Parser
 
@@ -102,20 +106,26 @@ When nil, only show popup without replacing content."
         (buffer-substring-no-properties start-pos (point))))))
 
 (defun org-block-hover--extract-section (file section-title)
-  "Extract org-mode section with SECTION-TITLE from FILE."
+  "Extract org-mode section with SECTION-TITLE from FILE, including the header."
   (when section-title
     (with-temp-buffer
       (insert-file-contents file)
       (org-mode)
       (goto-char (point-min))
-      (when (re-search-forward (format "^\\*+\\s-+%s$" (regexp-quote section-title)) nil t)
-        (let ((section-start (point)))
+      ;; Search for the exact section title, handling different heading levels
+      (when (re-search-forward (format "^\\*+\\s-+%s\\s-*$" (regexp-quote section-title)) nil t)
+        (let ((header-start (match-beginning 0))
+              (header-end (match-end 0))
+              (content-start (point)))
           (forward-line 1)
-          (let ((section-end
+          (let ((content-end
                  (if (re-search-forward "^\\*+" nil t)
                      (match-beginning 0)
                    (point-max))))
-            (buffer-substring-no-properties section-start section-end)))))))
+            ;; Combine header and content
+            (concat (buffer-substring-no-properties header-start header-end)
+                    "\n"
+                    (buffer-substring-no-properties content-start content-end))))))))
 
 (defun org-block-hover--extract-content (file type params)
   "Extract content from FILE based on TYPE and PARAMS."
@@ -185,11 +195,15 @@ When nil, only show popup without replacing content."
     (concat header "\n" content)))
 
 (defun org-block-hover--resolve-file-path (file-path)
-  "Resolve FILE-PATH relative to current org file."
-  (let ((current-file (buffer-file-name)))
+  "Resolve FILE-PATH relative to current org file.
+Strip any ::*section suffix before resolving the path."
+  (let* ((clean-path (if (string-match "::\\*" file-path)
+                         (substring file-path 0 (match-beginning 0))
+                       file-path))
+         (current-file (buffer-file-name)))
     (if current-file
-        (expand-file-name file-path (file-name-directory current-file))
-      (expand-file-name file-path))))
+        (expand-file-name clean-path (file-name-directory current-file))
+      (expand-file-name clean-path))))
 
 (defun org-block-hover-show-popup (include-info reference-info)
   "Show popup with INCLUDE-INFO and REFERENCE-INFO using org-hover-ui."
@@ -220,21 +234,25 @@ When nil, only show popup without replacing content."
           (narrow-to-region quote-start quote-end)
           (goto-char (point-min))
           (when (re-search-forward org-block-hover-include-regex nil t)
-            (let ((file (match-string 1))
-                  (type (match-string 2))
-                  (params (match-string 3)))
+            (let* ((file-and-section (match-string 1))
+                   (param-name (match-string 2))    ; :lines
+                   (param-value (match-string 3))    ; parameter value
+                   (file-parts (split-string file-and-section "::\\*"))
+                   (file (car file-parts))
+                   (section-name (cadr file-parts))) ; header-name may be nil
               (list
-               (cons 'file file)
+               (cons 'file file-and-section)  ; Keep full match for path resolution
                (cons 'type (cond
-                            ((null type) 'origin)
-                            ((string= type "lines") 'lines)
-                            ((string= type "section") 'section)))
+                            ((and section-name (not (string= section-name ""))) 'section)
+                            ((string= param-name "lines") 'lines)
+                            ((null param-name) 'origin)
+                            (t 'origin)))
                (cons 'params (cond
-                              ((null type) nil)
-                              ((string= type "lines")
-                               (when params
-                                 (mapcar #'string-to-number (split-string params "-"))))
-                              ((string= type "section") params)))))))))))
+                              ((and section-name (not (string= section-name ""))) section-name)
+                              ((string= param-name "lines")
+                               (when param-value
+                                 (mapcar #'string-to-number (split-string param-value "-"))))
+                              (t nil)))))))))))
 
 (defun org-block-hover--replace-and-show ()
   "Handle INCLUDE block: show context for simple INCLUDE, replace for parameterized INCLUDE."

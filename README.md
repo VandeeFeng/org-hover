@@ -7,7 +7,7 @@ An Emacs package that provides hover preview functionality for org links.
 ## Features
 
 - **Link Preview**: Preview content of file links in org-mode
-- **Block Preview**: Preview content of `#+INCLUDE:` blocks
+- **Block Preview**: Preview specific files using native org-mode `#+INCLUDE` syntax within `#+begin_quote` blocks
 - **Smart Positioning**: Intelligently position popup windows based on screen boundaries
 - **Adaptive Sizing**: Automatically adjust preview window size based on content
 - **Auto-hide**: Close popup by clicking outside or configure auto-hide after delay
@@ -37,7 +37,13 @@ Basic Usage:
 4. Press `C-c h b` to preview the `#+begin_quote:` block at point
 5. Press `C-c h B` to preview the `#+begin_quote:` block at point ,and insert the content
 
-example:
+## INCLUDE Examples
+
+All INCLUDE syntax follows the native org-mode `#+INCLUDE` syntax
+
+
+### Line Range Example
+Get a hover preview of lines 1-30 of the file:
 
 ```elisp
 #+begin_quote
@@ -45,7 +51,25 @@ example:
 #+end_quote
 ```
 
-Press `C-c h b` ,get a hover preview of the 1-30 line of the file.
+### Header Example
+get a hover preview of the section with its header included:
+
+```elisp
+#+begin_quote
+#+INCLUDE: "file.org::*Header"
+#+end_quote
+```
+
+### Full File Example
+get a hover preview of the entire file content (limited to first 1000 characters):
+
+```elisp
+#+begin_quote
+#+INCLUDE: "file.org"
+#+end_quote
+```
+
+**⚠️Note:** When auto-insert is enabled, the INCLUDE content will automatically replace and overwrite any existing content within the quote block.
 
 ## Configuration Options
 
