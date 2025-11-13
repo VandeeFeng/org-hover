@@ -57,7 +57,7 @@ When nil, only show popup without replacing content."
 ;;; Variables
 
 (defconst org-block-hover-include-regex
-  "^\\s-*#\\+INCLUDE:[ \t]*\"\\([^\"]+\\(?:::\\*[^\"]+\\)?\\)\"\\(?:[ \t]+:\\(lines\\)\\(?:[ \t]+\\([^\"\\n]*\\)\\)?\\)?"
+  "^\\s-*#\\+INCLUDE:[ \t]*\"\\([^\"]+\\(?:::\\*[^\"]+\\)?\\)\"\\(?:[ \t]+:\\(lines\\)[ \t]+\"\\([^\"]+\\)\"\\)?"
   "Regex pattern to match org INCLUDE directives.
 Matches:
 1. file path with optional ::*header
@@ -148,7 +148,7 @@ Matches:
       (when (search-forward text nil t)
         (cons (line-number-at-pos) (point))))))
 
-(defun org-block-hover--get-context (file line-num)
+(defun org-block-hover--extract-lines-around (file line-num)
   "Get context around LINE-NUM in FILE."
   (when (and file line-num (file-exists-p file))
     (with-temp-buffer
@@ -169,7 +169,9 @@ Matches:
   "Replace the content within quote block from QUOTE-START to QUOTE-END with NEW-CONTENT."
   (save-excursion
     (goto-char quote-start)
-    ;; Find the end of the INCLUDE line
+    ;; Move to the line after #+begin_quote
+    (forward-line 1)
+    ;; Find the end of the INCLUDE line (should be on this line or next few lines)
     (unless (re-search-forward "^\\s-*#\\+INCLUDE:.*$" quote-end t)
       (user-error "No INCLUDE line found in quote block"))
     (end-of-line)
@@ -208,13 +210,9 @@ Strip any ::*section suffix before resolving the path."
 (defun org-block-hover-show-popup (include-info reference-info)
   "Show popup with INCLUDE-INFO and REFERENCE-INFO using org-hover-ui."
   (let* ((file-path (org-block-hover--resolve-file-path (alist-get 'file include-info)))
-         (content (org-block-hover--extract-content
-                   file-path
-                   (alist-get 'type include-info)
-                   (alist-get 'params include-info)))
-         (location (when reference-info
-                     (org-block-hover--locate-reference file-path reference-info)))
-         (formatted-content (org-block-hover--format-popup-content content file-path location)))
+         (include-type (alist-get 'type include-info))
+         (formatted-content (org-block-hover--get-formatted-content
+                             include-type file-path include-info reference-info)))
     (when formatted-content
       (org-hover-ui-popup-show formatted-content))))
 
@@ -251,8 +249,39 @@ Strip any ::*section suffix before resolving the path."
                               ((and section-name (not (string= section-name ""))) section-name)
                               ((string= param-name "lines")
                                (when param-value
-                                 (mapcar #'string-to-number (split-string param-value "-"))))
+                                 (let ((parts (split-string param-value "-")))
+                                   (list (string-to-number (car parts))
+                                         (string-to-number (cadr parts))))))
                               (t nil)))))))))))
+
+(defun org-block-hover--process-include (include-info should-replace)
+  "Process INCLUDE block with INCLUDE-INFO.
+If SHOULD-REPLACE is non-nil, replace content; otherwise only show preview.
+IMPORTANT: For timer to work correctly, popup must be shown outside save-excursion."
+  (let* (;; Extract quote bounds first
+         (quote-bounds (save-excursion
+                         (let ((quote-start (re-search-backward "^#\\+begin_quote" nil t)))
+                           (when quote-start
+                             (let ((quote-end (re-search-forward "^#\\+end_quote" nil t)))
+                               (when quote-end
+                                 (cons quote-start quote-end)))))))
+         ;; Extract reference text using quote-bounds
+         (reference-text (when quote-bounds
+                           (save-excursion (org-block-hover--extract-from-quote quote-bounds)))))
+
+    ;; Handle content replacement if needed (within save-excursion)
+    (when (and should-replace quote-bounds)
+      (save-excursion
+        (let* ((include-type (alist-get 'type include-info))
+               (file-path (org-block-hover--resolve-file-path (alist-get 'file include-info))))
+          (if (eq include-type 'origin)
+              (org-block-hover--handle-unpara-include file-path reference-text quote-bounds)
+            (org-block-hover--handle-para-include file-path include-info reference-text quote-bounds))))))
+
+  ;; CRITICAL: Show popup OUTSIDE save-excursion context
+  ;; This preserves the cursor position for the timer cleanup mechanism
+  (when reference-text
+    (org-block-hover-show-popup include-info reference-text)))
 
 (defun org-block-hover--replace-and-show ()
   "Handle INCLUDE block: show context for simple INCLUDE, replace for parameterized INCLUDE."
@@ -303,59 +332,57 @@ Strip any ::*section suffix before resolving the path."
          (content-end (org-block-hover--get-content-end quote-end)))
     (org-block-hover--extract-reference-text content-start content-end)))
 
-(defun org-block-hover--handle-unpara-include (file-path reference-text quote-bounds)
-  "Handle unparameterized INCLUDE with FILE-PATH, REFERENCE-TEXT, and QUOTE-BOUNDS."
+(defun org-block-hover--prompt-insert (file-path content has-user-text)
+  "Prompt user for insertion decision based on user text and auto-insert setting."
+  (cond
+   ;; Has user text: never insert
+   (has-user-text nil)
+   ;; No user text + auto-insert enabled: auto-insert
+   (org-block-hover-auto-insert t)
+   ;; No user text + auto-insert disabled: ask user
+   (t (let ((inhibit-message t))
+        (y-or-n-p (format "Insert content from '%s'?" (file-name-nondirectory file-path)))))))
+
+(defun org-block-hover--get-unpara-content (file-path reference-text)
+  "Get content to show for unparameterized INCLUDE with FILE-PATH and REFERENCE-TEXT."
   (let* ((has-user-text (and reference-text (> (length reference-text) 0)))
          (location (when has-user-text
                      (org-block-hover--locate-reference file-path reference-text)))
          (context-content (when (and location (car location))
-                            (org-block-hover--get-context file-path (car location))))
-         (content-to-show (cond
-                           (context-content context-content)
-                           (has-user-text reference-text)
-                           (t (org-block-hover--extract-full-file file-path)))))
-    ;; Handle insertion based on user text and auto-insert setting
-    (cond
-     ;; Has user text: never insert
-     (has-user-text nil)
-     ;; No user text + auto-insert enabled: auto-insert
-     (org-block-hover-auto-insert
-      (org-block-hover--replace-quote-content (car quote-bounds) (cdr quote-bounds) content-to-show))
-     ;; No user text + auto-insert disabled: ask user
-     (t
-      (if (y-or-n-p (format "Insert content from '%s'?" (file-name-nondirectory file-path)))
-          (org-block-hover--replace-quote-content (car quote-bounds) (cdr quote-bounds) content-to-show)
-        (message "Insertion cancelled."))))))
+                            (org-block-hover--extract-lines-around file-path (car location)))))
+    (list (cond
+           (context-content context-content)
+           (has-user-text reference-text)
+           (t (org-block-hover--extract-full-file file-path)))
+          has-user-text)))
+
+(defun org-block-hover--handle-unpara-include (file-path reference-text quote-bounds)
+  "Handle unparameterized INCLUDE with FILE-PATH, REFERENCE-TEXT, and QUOTE-BOUNDS."
+  (let* ((content-and-flags (org-block-hover--get-unpara-content file-path reference-text))
+         (content-to-show (car content-and-flags))
+         (has-user-text (cadr content-and-flags)))
+    (when (org-block-hover--prompt-insert file-path content-to-show has-user-text)
+      (org-block-hover--replace-quote-content (car quote-bounds) (cdr quote-bounds) content-to-show))))
 
 (defun org-block-hover--handle-para-include (file-path include-info reference-text quote-bounds)
   "Handle parameterized INCLUDE with FILE-PATH, INCLUDE-INFO, REFERENCE-TEXT, and QUOTE-BOUNDS."
   (let* ((include-type (alist-get 'type include-info))
          (content (org-block-hover--extract-content
-                   file-path include-type (alist-get 'params include-info)))
-         (location (org-block-hover--locate-reference file-path reference-text)))
-    ;; Handle insertion based on auto-insert setting (parameterized INCLUDE never has user text)
-    (if org-block-hover-auto-insert
-        ;; Auto-insert enabled: insert directly
-        (org-block-hover--replace-quote-content (car quote-bounds) (cdr quote-bounds) content)
-      ;; Auto-insert disabled: ask user
-      (if (y-or-n-p (format "Insert content from '%s'?" (file-name-nondirectory file-path)))
-          (org-block-hover--replace-quote-content (car quote-bounds) (cdr quote-bounds) content)
-        (message "Insertion cancelled.")))))
+                   file-path include-type (alist-get 'params include-info))))
+    ;; Parameterized INCLUDE never has user text, so pass nil for has-user-text
+    (when (org-block-hover--prompt-insert file-path content nil)
+      (org-block-hover--replace-quote-content (car quote-bounds) (cdr quote-bounds) content))))
 
 (defun org-block-hover--get-formatted-content (include-type file-path include-info reference-text)
   "Get formatted content for popup based on INCLUDE-TYPE, FILE-PATH, INCLUDE-INFO, and REFERENCE-TEXT."
   (if (eq include-type 'origin)
       ;; Simple INCLUDE content
-      (let* ((has-user-text (and reference-text (> (length reference-text) 0)))
+      (let* ((content-and-flags (org-block-hover--get-unpara-content file-path reference-text))
+             (content (car content-and-flags))
+             (has-user-text (cadr content-and-flags))
              (location (when has-user-text
-                         (org-block-hover--locate-reference file-path reference-text)))
-             (context-content (when (and location (car location))
-                                (org-block-hover--get-context file-path (car location))))
-             (content-to-show (cond
-                               (context-content context-content)
-                               (has-user-text reference-text)
-                               (t (org-block-hover--extract-full-file file-path)))))
-        (org-block-hover--format-popup-content content-to-show file-path location))
+                         (org-block-hover--locate-reference file-path reference-text))))
+        (org-block-hover--format-popup-content content file-path location))
     ;; Parameterized INCLUDE content
     (let* ((content (org-block-hover--extract-content
                      file-path include-type (alist-get 'params include-info)))
